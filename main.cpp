@@ -40,33 +40,41 @@
 #define R6      32774
 #define R7      32775
 
+union bytes_to_u16
+{
+    struct
+    {
+        char low;
+        char high;
+    } bytes;
+    uint16_t u16;
+};
+
 class RAM
 {
     public:
+        
+        
         int read_memory(const char* filepath)
         {
-            long filesize = get_filesize(filepath);
-            loaded_size = filesize;
-            buffer = new char[filesize];
             std::ifstream input(filepath, std::ios::in | std::ios::binary);
-            if(!input.read(buffer, filesize)) return -1;
-            size_t size = input.tellg();
-            for(auto i = 0; i < filesize; ++i) {
-                char c = buffer[i];
-                /*if(isprint(c))  {
-                    if(c == '!' || c == '.')
-                        printf("\n");
-                    printf("%c", c);
-                }*/   
-            }
-            program_size = filesize / 2;
-            program = new uint16_t[program_size];
-            int index = 0;
+
+            program = new uint16_t[32768];
+            /*int index = 0;
             for(auto i = 1; i < program_size; i += 2) {
                 char c1 = buffer[i-1];
                 char c2 = buffer[i];
                 uint16_t byte = c1 | (c2 << 8);
                 program[index] = byte;
+                index++;
+            }*/
+            size_t index = 0;
+            char bytes[2];
+            bytes_to_u16 u;
+            while(input.read(bytes, 2)) {
+                u.bytes.low = bytes[0];
+                u.bytes.high = bytes[1];
+                program[index] = u.u16;
                 index++;
             }
             return 1;
@@ -104,14 +112,14 @@ class CPU
             size_t cursor = 0;
             while(running) {
                 //Simulate slower CPU for the sake of debugging
-                usleep(500);
+                //usleep(1000);
                 uint16_t op = ram->read_program(cursor);
                 switch (op)
                 {
                     case HALT:
                         // HALT
                         printf("\nHALT\n");
-                        //exit(0);
+                        exit(0);
                         cursor++;
                         break;
                     case SET:
@@ -190,11 +198,22 @@ class CPU
                         mem_op(WMEM, cursor);
                         cursor += 3;
                         break;
+                    case CALL:
+                        call_op(cursor);
+                        cursor = perform_jmp(cursor);
+                        break;
+                    case RET:
+                        cursor = ret_op(cursor);
+                        break;
                     case OUT:
                         // OUT
                         cursor++;
                         handle_print(ram->read_program(cursor));
                         cursor++;
+                        break;
+                    case IN:
+                        in_op(cursor);
+                        cursor += 2;
                         break;
                     case NOOP:
                         cursor++;
@@ -216,8 +235,8 @@ class CPU
             char low = val & 0xFF;
             char high = val >> 8;
             std::cout << low;
-            if(low == '!' || low == '.')
-                std::cout << std::endl;
+            /*if(low == '!' || low == '.')
+                std::cout << std::endl;*/
             //printf("%c\n", low);
             /*if(isprint(low))
                 std::cout << low;
@@ -227,7 +246,7 @@ class CPU
 
         void multiply(uint16_t i) 
         {
-            uint16_t addr = read_ram(i + 1);
+            uint16_t addr = ram->read_program(i + 1);
             uint16_t val1 = read_ram(i + 2);
             uint16_t val2 = read_ram(i + 3);
 
@@ -235,14 +254,11 @@ class CPU
             if(!is_valid(val3))
                 return;
             is_register(&val3);
-            if(check_is_register(addr))
-                set_register(addr, val3);
-            else 
-                ram->modify_program(addr, val3);
+            set_register(addr, val3);
         }
         void add(uint16_t i)
         {
-            uint16_t addr = read_ram(i + 1);
+            uint16_t addr = ram->read_program(i + 1);
             uint16_t val1 = read_ram(i + 2);
             uint16_t val2 = read_ram(i + 3);
             
@@ -250,14 +266,11 @@ class CPU
             if(!is_valid(val3))
                 return;
             is_register(&val3);
-            if(check_is_register(addr))
-                set_register(addr, val3);
-            else
-                ram->modify_program(addr, val3);
+            set_register(addr, val3);
         }
         void mod(uint16_t i)
         {
-            uint16_t addr = read_ram(i + 1);
+            uint16_t addr = ram->read_program(i + 1);
             uint16_t val1 = read_ram(i + 2);
             uint16_t val2 = read_ram(i + 3);
             
@@ -265,21 +278,19 @@ class CPU
             if(!is_valid(val3))
                 return;
             is_register(&val3);
-            if(check_is_register(addr))
-                set_register(addr, val3);
-            else
-                ram->modify_program(addr, val3);
+            set_register(addr, val3);
         }
         int perform_jmp(int i)
         {
+            int check = read_ram(i);
             int n = read_ram(i + 1);
             if(is_valid(n)) {
                 //printf("jmp to %i", n + 1);
-                std::cout << "jmp to " << n << std::endl;
+                //std::cout << "jmp to " << n << std::endl;
                 //n++;
                 return n;
             } else {
-                i++;
+                i += 2;
                 return i;
             }
                 
@@ -360,14 +371,14 @@ class CPU
         }
         void pop(uint16_t cursor, uint16_t val)
         {
-            is_register(&cursor);
+            uint16_t addr = ram->read_program(cursor + 1);
             is_register(&val);
-            ram->modify_program(cursor, val);
+            set_register(addr, val);
         }
         // Checks
         void compare(int cmp, uint16_t cursor)
         {
-            uint16_t pos = read_ram(cursor + 1);
+            uint16_t pos = ram->read_program(cursor + 1);
             uint16_t val1 = read_ram(cursor + 2);
             uint16_t val2 = read_ram(cursor + 3);
             bool cmp_val = false;
@@ -381,14 +392,14 @@ class CPU
                     break;
             }
             if(cmp_val) {
-                ram->modify_program(pos, 1);
+                set_register(pos, 1);
             } else {
-                ram->modify_program(pos, 0);
+                set_register(pos, 0);
             }
         }
         void bitwise_op(int bwise, uint16_t cursor)
         {
-            uint16_t pos = read_ram(cursor + 1);
+            uint16_t pos = ram->read_program(cursor + 1);
             uint16_t val1 = read_ram(cursor + 2);
             uint16_t val2 = read_ram(cursor + 3);
             uint16_t val3 = 0;
@@ -397,17 +408,17 @@ class CPU
             case OR:
                 val3 = val1 | val2;
                 is_register(&val3);
-                ram->modify_program(pos, val3);
+                set_register(pos, val3);
                 break;
             case AND:
                 val3 = val1 & val2;
                 is_register(&val3);
-                ram->modify_program(pos, val3);
+                set_register(pos, val3);
                 break;
             case NOT:
-                val3 = ~val1;
+                val3 = (~val1) & 0x7fff;
                 is_register(&val3);
-                ram->modify_program(pos, val3);
+                set_register(pos, val3);
                 break;
             default:
                 break;
@@ -430,15 +441,48 @@ class CPU
 
         void mem_op(int o, uint16_t cursor)
         {
-            uint16_t a = read_ram(cursor + 1);
-            uint16_t b = read_ram(cursor + 2);
+            uint16_t a = ram->read_program(cursor + 1);
+            uint16_t b_addr = ram->read_program(cursor + 2);
+            uint16_t b = read_ram(b_addr);
+            switch(o) {
+                case RMEM:
+                    set_register(a, b);
+                    break;
+                case WMEM:
+                    b = read_ram(cursor + 2);
+                    a = read_ram(cursor + 1);
+                    ram->modify_program(a, b);
+                    break;
+            }
 
+        }
 
+        void call_op(uint16_t cursor)
+        {
+            uint16_t addr = cursor + 2;
+            stack.push(addr);
+        }
+
+        uint16_t ret_op(uint16_t cursor)
+        {
+            if(stack.empty())
+                exit(1);
+            uint16_t val = stack.top();
+            stack.pop();
+            return val;
+        }
+
+        void in_op(uint16_t cursor)
+        {
+            uint16_t in = (uint16_t)getchar();
+            set_register(ram->read_program(cursor + 1), in);
         }
 
         bool is_valid(uint16_t x)
         {
-            return x < 32776;
+            if(x < 32776)
+                return true;
+            exit(-1);
         }
         void is_register(uint16_t* x) 
         {

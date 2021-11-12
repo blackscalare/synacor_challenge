@@ -5,6 +5,7 @@
 #include <vector>
 #include <stack>
 #include <unistd.h>
+#include <string>
 
 #define HALT    0
 #define SET     1
@@ -229,12 +230,21 @@ class CPU
         RAM* ram;
         std::vector<uint16_t> registers{0, 0, 0, 0, 0, 0, 0, 0};
         std::stack<uint16_t> stack;
+        std::string saved_out = "";
         void handle_print(uint16_t val)
         {
             is_register(&val);
             char low = val & 0xFF;
             char high = val >> 8;
             std::cout << low;
+            saved_out += low;
+            if(low == '\n') {
+                size_t found = saved_out.find("billion");
+                if(found != std::string::npos) {
+                        int x = 0;
+                }
+                saved_out = "";
+            }
             /*if(low == '!' || low == '.')
                 std::cout << std::endl;*/
             //printf("%c\n", low);
@@ -475,6 +485,13 @@ class CPU
         void in_op(uint16_t cursor)
         {
             uint16_t in = (uint16_t)getchar();
+            if(in == (uint16_t)'x') {
+                std::string rvs = "";
+                uint16_t reg_val = 0;
+                std::cin >> rvs;
+                reg_val = std::stoi(rvs);
+                set_register(R7, reg_val);
+            }
             set_register(ram->read_program(cursor + 1), in);
         }
 
